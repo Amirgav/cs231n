@@ -281,8 +281,17 @@ def lstm_step_forward(x, prev_h, prev_c, Wx, Wh, b):
     # You may want to use the numerically stable sigmoid implementation above.  #
     #############################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-
-    pass
+    N, H = prev_h.shape
+    # Activation layer
+    A = x.dot(Wx) + prev_h.dot(Wh) + b # Nx4H
+    input_gate = sigmoid(A[:, :H])
+    forget_gate = sigmoid(A[:, H:2*H])
+    output_gate = sigmoid(A[:, 2*H:3*H])
+    block_gate = np.tanh(A[:, 3*H:4*H])
+    next_c = forget_gate * prev_c + input_gate * block_gate
+    next_h = output_gate * np.tanh(next_c)
+    cache = (input_gate, forget_gate, output_gate, block_gate, next_c, prev_c,
+             prev_h, next_h, Wx, Wh, x)
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ##############################################################################
@@ -317,8 +326,59 @@ def lstm_step_backward(dnext_h, dnext_c, cache):
     # the output value from the nonlinearity.                                   #
     #############################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
+    input_gate, forget_gate, output_gate, \
+    block_gate, next_c, prev_c, prev_h, next_h, Wx, Wh, x = cache
 
-    pass
+    # implementation of this function taken from -
+    # https://github.com/Yorko/stanford_cs231n_2019/blob/master/cs231n/rnn_layers.py
+
+    # there's one more gradient of loss coming from the next hidden state
+    dnext_c += dnext_h * output_gate * (1 - np.tanh(next_c) ** 2)
+
+    # loss grad w.r.t. to previous cell state
+    dprev_c = dnext_c * forget_gate
+
+    # loss grad w.r.t. to input gate
+    grad_input = dnext_c * block_gate
+
+    # loss grad w.r.t. to forget gate
+    grad_forget = dnext_c * prev_c
+
+    # loss grad w.r.t. to output gate
+    grad_output = dnext_h * np.tanh(next_c)
+
+    # loss grad w.r.t. to block gate
+    grad_block = dnext_c * input_gate
+
+    # loss grad w.r.t. to input gate activations
+    grad_a_i = grad_input * input_gate * (1 - input_gate)
+
+    # loss grad w.r.t. to forget gate activations
+    grad_a_f = grad_forget * forget_gate * (1 - forget_gate)
+
+    # loss grad w.r.t. to output gate activations
+    grad_a_o = grad_output * output_gate * (1 - output_gate)
+
+    # loss grad w.r.t. to block gate activations
+    grad_a_g = grad_block * (1 - block_gate ** 2)
+
+    # loss grad w.r.t. to activations
+    grad_a = np.concatenate([grad_a_i, grad_a_f, grad_a_o, grad_a_g], axis=1)
+
+    # loss grad w.r.t. to input data
+    dx = grad_a.dot(Wx.T)
+
+    # loss grad w.r.t. to Wx
+    dWx = x.T.dot(grad_a)
+
+    # loss grad w.r.t. to previous hidden state
+    dprev_h = grad_a.dot(Wh.T)
+
+    # loss grad w.r.t. to Wx
+    dWh = prev_h.T.dot(grad_a)
+
+    # loss grad w.r.t. to biases
+    db = grad_a.sum(axis=0)
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ##############################################################################
@@ -356,8 +416,18 @@ def lstm_forward(x, h0, Wx, Wh, b):
     # You should use the lstm_step_forward function that you just defined.      #
     #############################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-
-    pass
+    N, T, D = x.shape
+    N, H = h0.shape
+    prev_h = h0
+    prev_c = np.zeros((N,H))
+    h = np.zeros((N,T,H))
+    cache = []
+    for i in range(T):
+        next_h, next_c, cache_i = lstm_step_forward(x[:, i, :], prev_h, prev_c, Wx, Wh, b)
+        prev_h = next_h
+        prev_c = next_c
+        h[:, i, :] = prev_h
+        cache.append(cache_i)
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ##############################################################################
@@ -388,8 +458,20 @@ def lstm_backward(dh, cache):
     # You should use the lstm_step_backward function that you just defined.     #
     #############################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-
-    pass
+    N, T, H = dh.shape
+    dnext_c_i = np.zeros((N,H))
+    dx_i, dprev_h, dprev_c_i, dWx, dWh, db = lstm_step_backward(dh[:, T-1, :], dnext_c_i, cache[T-1])
+    D = dx_i.shape[1]
+    dx = np.zeros((N, T, D))
+    dx[:, T-1, :] = dx_i
+    for i in range(T-2, -1, -1):
+        dx_i, dprev_h_i, dprev_c_i, dWx_i, dWh_i, db_i = lstm_step_backward(dh[:, i, :] + dprev_h, dprev_c_i, cache[i])
+        dx[:, i, :] += dx_i
+        dprev_h = dprev_h_i
+        dWx += dWx_i
+        dWh += dWh_i
+        db += db_i
+    dh0 = dprev_h
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ##############################################################################
